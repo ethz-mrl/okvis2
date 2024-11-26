@@ -555,6 +555,75 @@ bool Frontend::verifyRecognisedPlace(const Estimator &estimator,
   return true;
 }
 
+// filtered DBoW query result
+int Frontend::getFilteredDBoWResult(const std::unique_ptr<DBoW> &dBow,
+                                    const std::vector<std::vector<uchar>> &features,
+                                    std::vector<std::pair<StateId, double>> &stateIds) const
+{
+  DBoW2::QueryResults dBoWResult;
+  dBow->database.query(features, dBoWResult, -1); // get all matches
+  DBoW2::QueryResults dBoWResultOrig = dBoWResult;
+  // sort ascending -- we want to match oldest...
+  std::sort(dBoWResult.begin(),
+            dBoWResult.end(),
+            [](const DBoW2::Result &lhs, const DBoW2::Result &rhs) { return lhs.Id < rhs.Id; });
+
+  // nonmax suppression
+  std::set<uint64_t> ids;
+  std::set<uint64_t> suppressedIds;
+  const size_t numKeyframes = dBoWResultOrig.size();
+  int nonmaxRadius = 5;
+  for (size_t f = 0; f < numKeyframes; ++f) {
+    const double score = dBoWResultOrig[f].Score;
+    const uint64_t id = dBoWResultOrig[f].Id;
+    if (id >= dBoWResult.size())
+      continue;
+    if (score < 0.4) {
+      break;
+    }
+    // check suppressed:
+    if (suppressedIds.count(f)) {
+      continue;
+    }
+    // check maximum
+    bool isMax = true;
+    for (int a = std::max(0, int(id) - nonmaxRadius);
+         a <= (std::min(int(numKeyframes), int(id) + nonmaxRadius));
+         ++a) {
+      if (dBoWResult[a].Score > score) {
+        isMax = false;
+      }
+    }
+    if (!isMax) {
+      continue;
+    }
+
+    // suppress
+    for (int a = std::max(0, int(id) - nonmaxRadius);
+         a <= (std::min(int(numKeyframes), int(id) + nonmaxRadius));
+         ++a) {
+      suppressedIds.insert(a);
+    }
+
+    // use
+    ids.insert(id);
+  }
+
+  for (size_t id : ids) {
+
+    // start with oldest keyframe match
+    const double p = dBoWResult.at(id).Score;
+
+    // get old multiframe
+    uint64_t poseId = dBow->poseIds.at(id);
+
+    // output
+    stateIds.push_back(std::make_pair(StateId(poseId),p));
+  }
+
+  return stateIds.size();
+}
+
 // Matching as well as initialization of landmarks and state.
 bool Frontend::dataAssociationAndInitialization(
     Estimator &estimator, const okvis::ViParameters& params,
@@ -678,49 +747,21 @@ bool Frontend::dataAssociationAndInitialization(
       && !estimator.needsFullGraphOptimisation() && isInitialized_) {
     for (uint64_t c = 0; c < componentDBows_.size(); ++c) {
       TimerSwitchable matchDBoWTimer0("2.3.0 multi-session and multi-agent place recognition");
-      DBoW2::QueryResults dBoWResult;
-      componentDBows_.at(c)->database.query(features, dBoWResult, -1); // get all matches
-      // sort ascending -- we want to match oldest...
-      std::sort(dBoWResult.begin(),
-                dBoWResult.end(),
-                [](const DBoW2::Result &lhs, const DBoW2::Result &rhs) { return lhs.Id < rhs.Id; });
+      std::vector<std::pair<StateId, double>> stateIds;
+      getFilteredDBoWResult(componentDBows_.at(c), features, stateIds);
       matchDBoWTimer0.stop();
 
-      int attempts0 = 0;
       int attempts = 0;
 
-      for (size_t f = 0; f < dBoWResult.size() && attempts < 10; ++f) {
-        // start with oldest keyframe match
-        size_t id = dBoWResult.at(f).Id;
-        double p = dBoWResult.at(f).Score;
+      for (const auto & id : stateIds) {
+
+        double p = id.second;
 
         // get old multiframe
-        uint64_t poseId = componentDBows_.at(c)->poseIds.at(id);
-        MultiFramePtr oldMultiFrame = components_.at(c).multiFrames_.at(StateId(poseId));
+        MultiFramePtr oldMultiFrame = components_.at(c).multiFrames_.at(id.first);
 
-        // nonmax suppression
-        if (f > 0) {
-          if (dBoWResult.at(f - 1).Score > p) {
-            continue;
-          }
-          if (f > 1) {
-            if (dBoWResult.at(f - 2).Score > p) {
-              continue;
-            }
-          }
-        }
-        if (f + 1 < dBoWResult.size()) {
-          if (dBoWResult.at(f + 1).Score > p) {
-            continue;
-          }
-          if (f + 2 < dBoWResult.size()) {
-            if (dBoWResult.at(f + 2).Score > p) {
-              continue;
-            }
-          }
-        }
-
-        if (attempts0 > 40 || attempts > 10)
+        // stop after some amount of attempts
+        if (attempts > std::max(10, int(componentDBows_.at(c)->poseIds.size() / 20)))
           break;
         if (p > 0.4) {
           // std::cout << "@@@@@ found component place recognition to frame " << poseId << "."
@@ -740,9 +781,8 @@ bool Frontend::dataAssociationAndInitialization(
           attempts++;
 
           //std::cout << "@@@@@ T_Sold_Snew = " << std::endl << T_Sold_Snew.T() << std::endl;
-          estimator.T_AiS_[StateId(framesInOut->id())][c] = components_.at(c).fullGraph_->pose(
-                                                              StateId(poseId))
-                                                            * T_Sold_Snew;
+          estimator.T_AiS_[StateId(framesInOut->id())][c] =
+            components_.at(c).fullGraph_->pose(id.first) * T_Sold_Snew;
 
           break;
         }
@@ -756,70 +796,39 @@ bool Frontend::dataAssociationAndInitialization(
       && !estimator.needsFullGraphOptimisation() && isInitialized_) {
 
     TimerSwitchable matchDBoWTimer("2.03 loop closure query");
-
-    DBoW2::QueryResults dBoWResult;
-    dBow_->database.query(features,dBoWResult,-1); // get all matches
-    // sort ascending -- we want to match oldest...
-    std::sort( dBoWResult.begin( ), dBoWResult.end( ),
-               [ ]( const DBoW2::Result& lhs, const DBoW2::Result& rhs )
-    {
-       return lhs.Id < rhs.Id;
-    });
+    std::vector<std::pair<StateId, double>> stateIds;
+    getFilteredDBoWResult(dBow_, features, stateIds);
     matchDBoWTimer.stop();
     TimerSwitchable attemptLoopClosureTimer("2.07 attempt loop closure", true);
-    int attempts0 = 0;
-    int attempts = 0;
 
-    for(size_t f=0; f < dBoWResult.size() && attempts<10; ++f) {
+    // nonmax suppression
+    size_t attempts = 0;
+    for(const auto & id : stateIds) {
+      //std::cout << dBoWResult.at(f).Score << " ";
+
       // start with oldest keyframe match
-      size_t id = dBoWResult.at(f).Id;
-      double p = dBoWResult.at(f).Score;
+      const double p = id.second;
 
       // get old multiframe
-      uint64_t poseId = dBow_->poseIds.at(id);
-
-      // nonmax suppression
-      if(f>0){
-        if(dBoWResult.at(f-1).Score > p && estimator.isPlaceRecognitionFrame(StateId(poseId))) {
-          continue;
-        }
-        if(f>1) {
-          if(dBoWResult.at(f-2).Score > p && estimator.isPlaceRecognitionFrame(StateId(poseId))) {
-            continue;
-          }
-        }
-      }
-      if(f+1<dBoWResult.size()){
-        if(dBoWResult.at(f+1).Score > p && estimator.isPlaceRecognitionFrame(StateId(poseId))) {
-          continue;
-        }
-        if(f+2<dBoWResult.size()) {
-          if(dBoWResult.at(f+2).Score > p && estimator.isPlaceRecognitionFrame(StateId(poseId))) {
-            continue;
-          }
-        }
-      }
-
-      if(attempts0>40 || attempts>10) break;
+      if(attempts > std::max(size_t(10),dBow_->poseIds.size()/20)) break;
       if(p > 0.4) {
 
-        const std::shared_ptr<const MultiFrame> oldFrame = estimator.multiFrame(StateId(poseId));
+        const std::shared_ptr<const MultiFrame> oldFrame = estimator.multiFrame(id.first);
         /// \todo move to separate thread
 
         // check if already existing loop closure or matching against current frame
-        if(!estimator.isPoseGraphFrame(StateId(poseId))) {
+        if(!estimator.isPoseGraphFrame(id.first)) {
           continue;
         }
-        if(estimator.isLoopClosureFrame(StateId(poseId))) {
+        if(estimator.isLoopClosureFrame(id.first)) {
           continue;
         }
-        if(estimator.isRecentLoopClosureFrame(StateId(poseId))) {
+        if(estimator.isRecentLoopClosureFrame(id.first)) {
           continue;
         }
-        if(!estimator.isPlaceRecognitionFrame(StateId(poseId))) {
+        if(!estimator.isPlaceRecognitionFrame(id.first)) {
           continue;
         }
-        attempts0++;
 
         // verify with RANSAC and refine
         kinematics::Transformation T_Sold_Snew;
@@ -839,7 +848,7 @@ bool Frontend::dataAssociationAndInitialization(
               StateId(oldFrame->id()), StateId(frameId), T_Sold_Snew, H,
               skipFullGraphOptimisation);
         if(!loopClosureAttemptSuccessful) {
-          LOG(INFO) << "unsuccessful loop closure frame "<< poseId;
+          LOG(INFO) << "unsuccessful loop closure frame "<< id.first.value();
           attemptLoopClosureTimer.stop();
           continue;
         }
@@ -1438,10 +1447,10 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
   }
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "before ransac")
 
-  // remove outliers
+  // remove outliers -- initialise pose only without IMU
   const bool ransacRemoveOutliers = true;
   MultiFramePtr multiFrame = estimator.multiFrame(StateId(currentFrameId));
-  runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame,
+  runRansac3d2d(estimator, multiFrame->cameraSystem(), multiFrame, !params.imu.use,
                 ransacRemoveOutliers);
   T_WS1 = estimator.pose(StateId(currentFrameId));
   //OKVIS_ASSERT_TRUE(Exception, estimator.areLandmarksInFrontOfCameras(), "after ransac")
@@ -2234,7 +2243,7 @@ int Frontend::removeOutliers(Estimator &estimator,
 // Perform 3D/2D RANSAC.
 int Frontend::runRansac3d2d(
     Estimator &estimator, const okvis::cameras::NCameraSystem& nCameraSystem,
-    std::shared_ptr<okvis::MultiFrame> currentFrame, bool removeOutliers) {
+    std::shared_ptr<okvis::MultiFrame> currentFrame, bool initializePose, bool removeOutliers) {
   if (estimator.numFrames() < 2) {
     // nothing to match against, we are just starting up.
     return 1;
@@ -2294,7 +2303,9 @@ int Frontend::runRansac3d2d(
     //kinematics::Transformation T_WS0 = estimator.pose(StateId(currentFrame->id()));
     //LOG(INFO) << (T_WS * T_WS0.inverse()).r().norm() << " "
     //          << T_WS.q().angularDistance(T_WS0.q());
-    estimator.setPose(StateId(currentFrame->id()), T_WS);
+    if(initializePose) {
+      estimator.setPose(StateId(currentFrame->id()), T_WS);
+    }
     //LOG(INFO) << "RANSAC success " << numInliers << " "
     //          << double(ransac.inliers_.size())/double(numCorrespondences);
   } else {

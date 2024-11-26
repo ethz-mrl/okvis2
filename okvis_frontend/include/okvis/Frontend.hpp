@@ -354,6 +354,22 @@ private:
                    const okvis::ViParameters& params,
                    bool asKeyframe);
 
+  /// \brief DBoW for loop closure
+  /// https://en.cppreference.com/w/cpp/language/pimpl
+  class DBoW;
+  std::unique_ptr<DBoW> dBow_; ///< DBoW object (PIMPL).
+
+  /**
+   * @brief Get filtered DBoW query.
+   * @param[in] dBow DBoW database to use.
+   * @param[in] features Features to match against DBoW.
+   * @param[out] stateIds Resulting matching (keyframe) pose IDs with corresponding scores.
+   * @return Number of matching keyframes.
+   */
+  int getFilteredDBoWResult(const std::unique_ptr<DBoW> &dBow,
+                            const std::vector<std::vector<uchar>> &features,
+                            std::vector<std::pair<StateId, double>> &stateIds) const;
+
   /**
    * @brief Verifies a recognised place with 3D2D matching, ransac, and nonlinear pose refinement.
    * @param[in] estimator Estimator.
@@ -378,12 +394,14 @@ private:
    * @param estimator       Estimator.
    * @param nCameraSystem   Camera configuration and parameters.
    * @param currentFrame    Frame with the new potential matches.
+   * @param initializePose  Initialize the pose from RANSAC?
    * @param removeOutliers  Remove observation of outliers in estimator.
    * @return Number of inliers.
    */
-  int runRansac3d2d(Estimator& estimator,
+  int runRansac3d2d(Estimator &estimator,
                     const okvis::cameras::NCameraSystem &nCameraSystem,
                     std::shared_ptr<okvis::MultiFrame> currentFrame,
+                    bool initializePose,
                     bool removeOutliers);
   /**
    * @brief Remove outliers on current frame.
@@ -424,11 +442,6 @@ private:
 
   /// \brief Classification network for keypoints (if enabled).
   std::vector<std::shared_ptr<Network>> networks_;
-
-  /// \brief DBoW for loop closure
-  /// https://en.cppreference.com/w/cpp/language/pimpl
-  class DBoW;
-  std::unique_ptr<DBoW> dBow_; ///< DBoW object (PIMPL).
 
   /**
    * @brief Match the frames to older, co-visible frames and triangulate.
