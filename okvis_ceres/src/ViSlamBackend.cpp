@@ -2077,10 +2077,6 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
     return false;
   }
 
-  // first get all the current observations as two-pose edges
-  std::vector<ViGraphEstimator::PoseGraphEdge> poseGraphEdges, poseGraphEdgesAdded;
-  realtimeGraph_.obtainPoseGraphMst(poseGraphEdges);
-
   int numSteps = 0; // number of steps to distribute error over
   StateId lastLoopId = auxiliaryStates_.at(pose_i).loopId;
   for(auto iter = realtimeGraph_.states_.find(pose_i);
@@ -2094,6 +2090,7 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
   StateId firstId = auxiliaryStates_.at(pose_i).loopId;
   lastLoopId = firstId;
   double distanceTravelled = 0.0;
+  double distanceTravelled2 = 0.0; // just for the heuristic
   kinematics::Transformation T_WS_i = realtimeGraph_.states_.at(pose_i).pose->estimate();
   kinematics::Transformation T_WS_last = realtimeGraph_.states_.at(pose_i).pose->estimate();
   auto iter = realtimeGraph_.states_.find(pose_i);
@@ -2103,7 +2100,7 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
   if(pose_i != lastLoopId) {
     distanceTravelledVec +=
         (realtimeGraph_.states_.at(lastLoopId).pose->estimate().r()-T_WS_i.r());
-    distanceTravelled += distanceTravelledVec.norm();
+    distanceTravelled2 += distanceTravelledVec.norm();
 
   }
   for(; iter != realtimeGraph_.states_.end(); ++iter) {
@@ -2117,6 +2114,7 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
       distances.push_back(ds);
       distanceTravelledVec += dsVec;
       distanceTravelled += ds;
+      distanceTravelled2 += ds;
       T_WS_i = T_WS_j;
     }
   }
@@ -2134,6 +2132,11 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
     const kinematics::Transformation T_WSj_new = T_WSi * T_Si_Sj;
     kinematics::Transformation T_Wnew_Wold_final = T_WSj_new * T_WSj_old.inverse();
 
+    // compute rotation increment for the later averaging
+    Eigen::AngleAxisd aa(T_Wnew_Wold_final.q());
+    aa.angle() = aa.angle() * (1.0 / double(numSteps));
+    const kinematics::Transformation T_WW(Eigen::Vector3d(0.0,0.0,0.0), Eigen::Quaterniond(aa));
+
     // compute rotation adjustments
     kinematics::Transformation T_WS_prev = realtimeGraph_.pose(pose_i);
     kinematics::Transformation T_WS = realtimeGraph_.pose(pose_i);
@@ -2146,25 +2149,23 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
       T_WS_prev = T_WSk_old;
       const StateId loopId = auxiliaryStates_.at(iter->first).loopId;
       if(lastLoopId!=loopId) {
-        Eigen::Quaterniond slerped(1.0,0.0,0.0,0.0);
-        slerped.slerp(1.0/double(numSteps), T_Wnew_Wold_final.q());
-        T_WS = kinematics::Transformation(Eigen::Vector3d(0.0,0.0,0.0), slerped)
-                *  T_WS * T_SS;
+        T_WS = T_WW * T_WS * T_SS;
         lastLoopId = loopId;
       } else {
         T_WS = T_WS * T_SS;
       }
     }
 
+    // compute translation error to be distributed later
     const Eigen::Vector3d dr_W = T_WSj_new.r()-T_WS.r();
 
     // heuristic verification: check relative trajectory errors
-    const double relPositionError = dr_W.norm()/(distanceTravelled);
+    const double relPositionError = dr_W.norm()/(distanceTravelled2);
     const double relOrientationError =
         T_WSj_new.q().angularDistance(T_WSj_old.q())/double(numSteps);
     const double relPositionErrorBudget = // [m/m]
             0.0135 + // 1.35% position bias
-            0.02*distanceTravelledVec.norm()/distanceTravelled + // 2% scale error
+            0.02*distanceTravelledVec.norm()/distanceTravelled2 + // 2% scale error
             0.08/sqrt(numSteps); // position noise, 8% stdev per step
     const double relOrientationErrorBudget =
         0.0004 + 0.004/sqrt(numSteps); // bias and noise, in rad/step
@@ -2177,7 +2178,7 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
           << relPositionErrorBudget << " m/m, rel. or. err. "
           << relOrientationError << " vs budget "
           << relOrientationErrorBudget << " rad/kf";
-      LOG(INFO) << "dist. travelled " << distanceTravelled << " m, no. steps " << numSteps;
+      LOG(INFO) << "dist. travelled " << distanceTravelled2 << " m, no. steps " << numSteps;
 
       return false;
     }
@@ -2198,10 +2199,7 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
       if(lastLoopId!=loopId) {
         // we weight distance adjustments by distance travelled, and rotation uniformly.
         r +=  distances.at(size_t(ctr)) / distanceTravelled;
-        Eigen::Quaterniond slerped(1.0,0.0,0.0,0.0);
-        slerped.slerp(1.0/double(numSteps), T_Wnew_Wold_final.q());
-        T_WS = kinematics::Transformation(Eigen::Vector3d(0.0,0.0,0.0),slerped)
-                    *  T_WS * T_SS;
+        T_WS = T_WW *  T_WS * T_SS;
         lastLoopId = loopId;
         ++ctr;
       } else {
@@ -2219,7 +2217,7 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
       updatedStatesLoopClosureAttempt_.insert(iter->first);
     }
 
-    /// update landmarks
+    // update landmarks
     for(auto iter = realtimeGraph_.landmarks_.begin();
         iter != realtimeGraph_.landmarks_.end(); ++iter) {
       // TODO: check if this is always right!
@@ -2227,14 +2225,18 @@ bool ViSlamBackend::attemptLoopClosure(StateId pose_i, StateId pose_j,
       realtimeGraph_.setLandmark(iter->first, hPointNew, iter->second.hPoint->initialized());
       fullGraph_.setLandmark(iter->first, hPointNew, iter->second.hPoint->initialized());
     }
-
-    LOG(INFO) << "Long loop closure";
   }
 
   // remember this frame closed a loop
   auxiliaryStates_.at(pose_j).closedLoop = true;
 
   fullGraphRelativePoseConstraints_.push_back(RelPoseInfo{T_Si_Sj, information, pose_i, pose_j});
+
+  //const kinematics::Transformation T_SiSj_estimated = (pose(pose_i).inverse() * pose(pose_j));
+  //OKVIS_ASSERT_TRUE(Exception,
+  //                  (T_SiSj_estimated.inverse() * T_Si_Sj).T().isIdentity(1.0e-6),
+  //                  "We are f**ked: T_SiSj_estimated = \n" << T_SiSj_estimated.T() << std::endl <<
+  //                  "T_Si_Sj = \n" << T_Si_Sj.T())
 
   return true;
 }
