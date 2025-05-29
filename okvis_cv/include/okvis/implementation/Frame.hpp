@@ -68,7 +68,6 @@ Frame::Frame(const cv::Mat & image,
 // set the frame image;
 void Frame::setImage(const cv::Mat & image)
 {
-  //cv::medianBlur(image,image_,3);
   image_ = image;
 }
 
@@ -374,6 +373,20 @@ inline bool Frame::resetKeypoints(const std::vector<cv::KeyPoint> & keypoints) {
 inline bool Frame::resetDescriptors(const cv::Mat & descriptors) {
   descriptors_ = descriptors;
   return true;
+}
+
+/// release memory of image
+void Frame::clearImage() {
+  if (!image_.empty()) {
+    image_ = cv::Mat();
+  }
+}
+
+/// release memory of depth image
+void Frame::clearDepthImage() {
+  if (!depthImage_.empty()) {
+    depthImage_ = cv::Mat();
+  }
 }
 
 size_t Frame::numKeypoints() const {

@@ -240,6 +240,12 @@ class Frame
   /// \return whether or not the operation was successful.
   inline bool resetDescriptors(const cv::Mat & descriptors);
 
+  /// \brief Release memory of image
+  inline void clearImage();
+
+  /// \brief Release memory of depth image
+  inline void clearDepthImage();
+
   /// \brief Get the number of keypoints.
   /// \return The number of keypoints.
   inline size_t numKeypoints() const;

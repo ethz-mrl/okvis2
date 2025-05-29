@@ -549,9 +549,16 @@ bool ViSlamBackend::applyStrategy(size_t numKeyframes,
         }
         continue;
       }
-      if(convertToPosegraphFrames.size() > 0) {
+      if (convertToPosegraphFrames.size() > 0) {
         bool success = convertToPoseGraphMst(convertToPosegraphFrames, framesToConsider,
                                              affectedFrames);
+
+        // also free image memory now
+        for (auto id : convertToPosegraphFrames) {
+          multiFrames_.at(id)->clearAllImages();
+          multiFrames_.at(id)->clearAllDepthImages();
+        }
+
         ctrPg++;
         OKVIS_ASSERT_TRUE(Exception, realtimeGraph_.states_.at(minId).observations.size()==0,
                           "observations at ID " << minId.value() << " , success=" << int(success))

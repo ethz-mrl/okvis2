@@ -293,6 +293,12 @@ class MultiFrame
   /// \return whether or not the operation was successful.
   inline bool resetDescriptors(size_t cameraIdx, const cv::Mat & descriptors);
 
+  /// \brief Release memory of all images
+  inline void clearAllImages();
+
+  /// \brief Release memory of all depth images
+  inline void clearAllDepthImages();
+
   /// \brief the number of keypoints
   /// @param[in] cameraIdx The camera index.
   /// \return The number of keypoints.

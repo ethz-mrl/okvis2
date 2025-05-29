@@ -319,7 +319,19 @@ bool MultiFrame::resetDescriptors(size_t cameraIdx, const cv::Mat & descriptors)
   return frames_[cameraIdx].resetDescriptors(descriptors);
 }
 
-//
+/// release memory of all images
+void MultiFrame::clearAllImages() {
+  for (auto& f : frames_) {
+    f.clearImage();
+  }
+}
+
+/// release memory of all depth images
+void MultiFrame::clearAllDepthImages() {
+  for (auto& f : frames_) {
+    f.clearDepthImage();
+  }
+}
 
 // get the total number of keypoints in all frames.
 size_t MultiFrame::numKeypoints() const

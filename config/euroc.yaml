@@ -91,6 +91,6 @@ estimator_parameters:
 
 # some options for how and what to output
 output_parameters:
-    display_matches: true  # displays debug video and matches. May be slow.
+    display_matches: false  # displays debug video and matches. May be slow.
     display_overhead: false # debug overhead image. Is slow.
 
