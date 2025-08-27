@@ -98,7 +98,7 @@ void Trajectory::update(const TrackingState & trackingState,
       keyframeIdByStateId_[currentState.id] = trackingState.currentKeyframeId;
     }
   }
-  uint64_t timestampUs = currentState.timestamp.sec*1000000 + currentState.timestamp.nsec/1000;
+  uint64_t timestampUs = currentState.timestamp.toNSec() / 1000L;
   statesByTimestampUs_[timestampUs] = currentState.id;
 
   // prepare new propagator
@@ -167,7 +167,7 @@ bool Trajectory::addImuMeasurement(const Time &stamp,
 }
 
 bool Trajectory::getState(const Time & timestamp, State& state) {
-  uint64_t timestampUs = timestamp.sec*1000000 + timestamp.nsec/1000;
+  uint64_t timestampUs = timestamp.toNSec() / 1000L;
   if(statesByTimestampUs_.count(timestampUs)) { 
     const StateId stateId = statesByTimestampUs_.at(timestampUs);
     return getState(stateId, state);
