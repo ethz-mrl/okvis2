@@ -1323,29 +1323,31 @@ int Frontend::matchToMap(Estimator &estimator, const okvis::ViParameters& params
           const MultiFramePtr oldFrame =
               estimator.multiFrame(StateId(kid.frameId));
           std::memcpy(
-              landmarkToMatch.descriptors.data+48*o,
+              landmarkToMatch.descriptors.data+48*worstIdx,
               oldFrame->keypointDescriptor(
                   kid.cameraIndex, kid.keypointIndex), 48);
 
           // remember some other stuff for efficiency
           Eigen::Vector3d e_C;
           oldFrame->getBackProjection(kid.cameraIndex, kid.keypointIndex, e_C);
-          landmarkToMatch.e_W.col(o) = T_WC_old.C()*e_C.normalized();
-          landmarkToMatch.r_W.col(o) = T_WC_old.r();
+          landmarkToMatch.e_W.col(worstIdx) = T_WC_old.C()*e_C.normalized();
+          landmarkToMatch.r_W.col(worstIdx) = T_WC_old.r();
           landmarkToMatch.kids.push_back(kid);
 
           // remember which were used
           //std::cout << " write " << worstIdx << " " << score;
-          o = std::max(o,worstIdx);
+          o = std::max(o, worstIdx);
           bestScores[worstIdx] = score;
         }
       }
 
+
       // crop unused bottom rows / right cols
-      landmarkToMatch.descriptors = landmarkToMatch.descriptors(cv::Rect(0, 0, 48, o));
-      landmarkToMatch.e_W.conservativeResize(3,o);
-      landmarkToMatch.r_W.conservativeResize(3,o);
-      dataPtr += o*48;
+      //then here he can shorten the number of descriptros
+      landmarkToMatch.descriptors = landmarkToMatch.descriptors(cv::Rect(0, 0, 48, o + 1));
+      landmarkToMatch.e_W.conservativeResize(3,o + 1);
+      landmarkToMatch.r_W.conservativeResize(3,o + 1);
+      dataPtr += (o + 1) *48;
 
       //std::cout << o << std::endl;
 
