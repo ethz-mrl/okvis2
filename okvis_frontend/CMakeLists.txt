@@ -40,7 +40,6 @@ target_include_directories(${LIB_NAME}
     ${DBoW2_INCLUDE_DIRS}
     ${GLOG_INCLUDE_DIRS}
     ${OPENGV_INCLUDE_DIRS}
-    ${TORCH_INCLUDE_DIRS}
 )
 target_link_libraries(${LIB_NAME}
   PUBLIC
@@ -56,7 +55,6 @@ target_link_libraries(${LIB_NAME}
     ${GLOG_LIBRARIES}
     ${OPENGV_LIBRARIES}
     ${OpenCV_LIBS}
-    ${TORCH_LIBRARIES}
     Ceres::ceres
 )
 target_compile_features(${LIB_NAME} PUBLIC cxx_std_${OKVIS_CXX_STANDARD})
@@ -69,6 +67,14 @@ target_compile_options(${LIB_NAME}
 if(USE_NN)
   target_compile_definitions(${LIB_NAME} PUBLIC OKVIS_USE_NN C10_USE_GLOG)
   target_compile_options(${LIB_NAME} PUBLIC ${TORCH_CXX_FLAGS})
+  target_include_directories(${LIB_NAME}
+  PUBLIC
+    ${TORCH_INCLUDE_DIRS}
+  )
+  target_link_libraries(${LIB_NAME}
+    PRIVATE
+      ${TORCH_LIBRARIES}
+  )
   if(USE_GPU)
     target_compile_definitions(${LIB_NAME} PUBLIC OKVIS_USE_GPU)
   endif()
