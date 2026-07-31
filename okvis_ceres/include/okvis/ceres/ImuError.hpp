@@ -168,9 +168,7 @@ class ImuError :
   /// \brief Append with measurements and parameters.
   /// \@param[in] imuMeasurements All the IMU measurements.
   /// \@param[in] t_1 End time.
-  int append(const okvis::kinematics::Transformation& T_WS,
-             const okvis::SpeedAndBias & speedAndBiases,
-             const okvis::ImuMeasurementDeque & imuMeasurements,
+  int append(const okvis::ImuMeasurementDeque & imuMeasurements,
              const okvis::Time& t_1);
 
   /**
@@ -334,6 +332,33 @@ class ImuError :
     }
   };
 
+  /// \brief One integration interval, aligned to the preintegration period and bias-corrected.
+  struct AlignedInterval
+  {
+    double dt;              ///< Interval duration [s].
+    ImuSensorReadings imu;  ///< Midpoint reading over the interval, with the biases removed.
+    double sigma_g_c;       ///< Gyroscope noise density, scaled up on saturation.
+    double sigma_a_c;       ///< Accelerometer noise density, scaled up on saturation.
+  };
+
+  /**
+   * @brief Align measurements to the given time interval and correct them for the given biases.
+   *
+   * Interpolates so that the first and last interval coincide exactly with t0 and t1, drops the
+   * intervals outside [t0, t1], and reduces each remaining interval to its midpoint reading with
+   * the biases removed.
+   *
+   * @param[in] imuMeasurements The IMU measurements. Must span t0 - t1.
+   * @param[in] imuParameters The parameters to be used.
+   * @param[in] speedAndBiases Speed and biases providing the biases to remove.
+   * @param[in] t0 Start time.
+   * @param[in] t1 End time.
+   * @return One entry per integration interval, in chronological order.
+   */
+  static std::vector<AlignedInterval> alignAndCorrectMeasurements(
+    const ImuMeasurementDeque & imuMeasurements, const ImuParameters & imuParameters,
+    const SpeedAndBias & speedAndBiases, const Time & t0, const Time & t1);
+
   /**
    * @brief Reset preintegrated measurements to identity, helper measurements to zero and preintegration covariance to zero.
    */
@@ -362,19 +387,18 @@ class ImuError :
     const Eigen::Matrix3d & C_0, const Eigen::Matrix3d & C_1, const Eigen::Quaterniond & dq);
 
   /**
-   * @brief Do propagation from t0_ to t1_ with given start states.
-   * @param[in] speedAndBiases Start speed and biases.
-   * @param[in] imuMeasurements The IMU measurements to be used. Must span t0_ - t1_.
-   * @param[in] t0 Start time.
-   * @param[in] t1 End time.
-   * @param[in] reset If true, reset preintegrated measurements, helpers and covariance.
+   * @brief Propagate the preintegrated measurements over already-aligned intervals.
+   * @param[inout] preintegrated The preintegrated measurements to advance.
+   * @param[inout] helpers The helper variables to advance.
+   * @param[inout] covariance The preintegration covariance to advance.
+   * @param[in] imu_parameters The parameters to be used, for the bias random walk noise densities.
+   * @param[in] intervals The intervals as returned by alignAndCorrectMeasurements().
    * @return Number of integration steps.
    */
   static int doPropagation(
     PreintegratedMeasurements & preintegrated, HelperMeasurements & helpers,
     Eigen::Matrix<double, kNumResiduals, kNumResiduals> & covariance,
-    const ImuParameters & imu_parameters, const ImuMeasurementDeque & imuMeasurements,
-    const SpeedAndBias & speedAndBiases, const Time & t0, const Time & t1);
+    const ImuParameters & imu_parameters, const std::vector<AlignedInterval> & intervals);
 
   // parameters
   okvis::ImuParameters imuParameters_; ///< The IMU parameters.
@@ -398,7 +422,6 @@ class ImuError :
   /// \brief Reference biases that are updated when called redoPreintegration.
   mutable SpeedAndBias speedAndBiases_ref_ = SpeedAndBias::Zero();
 
-  mutable bool redo_ = true; ///< Keeps track of whether or not redoPreintegration() is needed.
   mutable int redoCounter_ = 0; ///< Counts the number of preintegrations for statistics.
 
   // information matrix and its square root

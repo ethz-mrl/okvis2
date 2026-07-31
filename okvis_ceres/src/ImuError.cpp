@@ -48,9 +48,24 @@
 #include <okvis/kinematics/Transformation.hpp>
 #include <okvis/PseudoInverse.hpp>
 
+
 /// \brief okvis Main namespace of this package.
 namespace okvis {
 /// \brief ceres Namespace for ceres-related functionality implemented in okvis.
+
+namespace {
+/// \brief Linearly interpolate the gyroscope and accelerometer readings of a and b to target.
+/// \warning target is expected to lie within [a.timeStamp, b.timeStamp].
+ImuSensorReadings interpolate(
+  const ImuMeasurement & a, const ImuMeasurement & b, const Time & target)
+{
+  const double r = (target - a.timeStamp).toSec() / (b.timeStamp - a.timeStamp).toSec();
+  return ImuSensorReadings(
+    (1.0 - r) * a.measurement.gyroscopes + r * b.measurement.gyroscopes,
+    (1.0 - r) * a.measurement.accelerometers + r * b.measurement.accelerometers);
+}
+}  // namespace
+
 namespace ceres {
 
 std::atomic_bool ImuError::redoPropagationAlways(false);
@@ -170,70 +185,96 @@ ImuError::HelperMeasurements ImuError::computeNextHelperMeasurements(
   return next_helpers;
 }
 
-int ImuError::doPropagation(
-  PreintegratedMeasurements & preintegrated, HelperMeasurements & helpers,
-  Eigen::Matrix<double, kNumResiduals, kNumResiduals> & covariance,
-  const ImuParameters & imuParameters, const ImuMeasurementDeque & imuMeasurements,
+std::vector<ImuError::AlignedInterval> ImuError::alignAndCorrectMeasurements(
+  const ImuMeasurementDeque & imuMeasurements, const ImuParameters & imuParameters,
   const SpeedAndBias & speedAndBiases, const Time & t0, const Time & t1)
 {
-  Time time = t0;
-  const Time & end = t1;
+  std::vector<AlignedInterval> aligned;
+  
+  if (imuMeasurements.size() < 2) {
+    return aligned;  // no interval to integrate over
+  }
 
-  bool hasStarted = false;
-  int cnt = 0;
+  aligned.reserve(imuMeasurements.size());
+
   for (ImuMeasurementDeque::const_iterator it = imuMeasurements.begin();
        it != imuMeasurements.end() - 1; ++it) {
-    auto imu_0 = it->measurement;
-    auto imu_1 = (it + 1)->measurement;
+    ImuMeasurement m_0 = *it;
+    ImuMeasurement m_1 = *(it + 1);
 
-    Time current_time = it->timeStamp;
-    Time next_time = (it + 1)->timeStamp;
-    double dt = (next_time - time).toSec();
+    if (m_1.timeStamp < t0) {
+      continue;  // entirely before the preintegration period
+    }
 
+    if (t1 < m_0.timeStamp) {
+      break;  // entirely after it
+    }
+
+    // clip the interval to [t0, t1]
+    if (m_0.timeStamp < t0) {
+      m_0.measurement = interpolate(m_0, m_1, t0);
+      m_0.timeStamp = t0;
+    }
+
+    if (t1 < m_1.timeStamp) {
+      m_1.measurement = interpolate(m_0, m_1, t1);
+      m_1.timeStamp = t1;
+    }
+
+    const double dt = (m_1.timeStamp - m_0.timeStamp).toSec();
     if (dt <= 0.0) {
       continue;
     }
 
-    if (end < next_time) {
-      double interval = (next_time - it->timeStamp).toSec();
-      next_time = end;
-      dt = (next_time - time).toSec();
-      const double r = dt / interval;
-      imu_1.gyroscopes = ((1.0 - r) * imu_0.gyroscopes + r * imu_1.gyroscopes).eval();
-      imu_1.accelerometers = ((1.0 - r) * imu_0.accelerometers + r * imu_1.accelerometers).eval();
-    }
+    const ImuSensorReadings & imu_0 = m_0.measurement;
+    const ImuSensorReadings & imu_1 = m_1.measurement;
 
-    if (!hasStarted) {
-      hasStarted = true;
-      if (current_time < time) {
-        const double r = dt / (next_time - it->timeStamp).toSec();
-        imu_0.gyroscopes = (r * imu_0.gyroscopes + (1.0 - r) * imu_1.gyroscopes).eval();
-        imu_0.accelerometers = (r * imu_0.accelerometers + (1.0 - r) * imu_1.accelerometers).eval();
-      }
-    }
-
-    double sigma_g_c = imuParameters.sigma_g_c;
-    double sigma_a_c = imuParameters.sigma_a_c;
-    const double & sigma_gw_c = imuParameters.sigma_gw_c;
-    const double & sigma_aw_c = imuParameters.sigma_aw_c;
+    AlignedInterval interval;
+    interval.dt = dt;
+    interval.sigma_g_c = imuParameters.sigma_g_c;
+    interval.sigma_a_c = imuParameters.sigma_a_c;
 
     if (
       imu_0.gyroscopes.cwiseAbs().maxCoeff() > imuParameters.g_max ||
       imu_1.gyroscopes.cwiseAbs().maxCoeff() > imuParameters.g_max) {
-      sigma_g_c *= 100;
+      interval.sigma_g_c *= 100;
       LOG(WARNING) << "Gyr saturation - scaling sigma";
     }
 
     if (
       imu_0.accelerometers.cwiseAbs().maxCoeff() > imuParameters.a_max ||
       imu_1.accelerometers.cwiseAbs().maxCoeff() > imuParameters.a_max) {
-      sigma_a_c *= 100;
+      interval.sigma_a_c *= 100;
       LOG(WARNING) << "Acc saturation - scaling sigma";
     }
 
-    ImuSensorReadings imu{
+    interval.imu = ImuSensorReadings{
       0.5 * (imu_0.gyroscopes + imu_1.gyroscopes) - speedAndBiases.segment<3>(3),
       0.5 * (imu_0.accelerometers + imu_1.accelerometers) - speedAndBiases.segment<3>(6)};
+
+    aligned.push_back(interval);
+
+    if (m_1.timeStamp == t1) {
+      break;
+    }
+  }
+
+  return aligned;
+}
+
+int ImuError::doPropagation(
+  PreintegratedMeasurements & preintegrated, HelperMeasurements & helpers,
+  Eigen::Matrix<double, kNumResiduals, kNumResiduals> & covariance,
+  const ImuParameters & imuParameters, const std::vector<AlignedInterval> & intervals)
+{
+  const double & sigma_gw_c = imuParameters.sigma_gw_c;
+  const double & sigma_aw_c = imuParameters.sigma_aw_c;
+
+  for (const AlignedInterval & aligned : intervals) {
+    const double dt = aligned.dt;
+    const double & sigma_g_c = aligned.sigma_g_c;
+    const double & sigma_a_c = aligned.sigma_a_c;
+    const ImuSensorReadings & imu = aligned.imu;
 
     const auto & w = imu.gyroscopes;
     const auto & a = imu.accelerometers;
@@ -276,22 +317,14 @@ int ImuError::doPropagation(
     // memory shift
     preintegrated = next_preintegrated;
     helpers = next_helpers;
-    time = next_time;
-
-    ++cnt;
-
-    if (next_time == end) {
-      break;
-    }
   }
 
   covariance = 0.5 * (covariance + covariance.transpose().eval());
 
-  return cnt;
+  return int(intervals.size());
 }
 
 int ImuError::append(
-  const okvis::kinematics::Transformation & /*T_WS*/, const okvis::SpeedAndBias & speedAndBiases,
   const okvis::ImuMeasurementDeque & imuMeasurements, const okvis::Time & t_1)
 {
   OKVIS_ASSERT_TRUE_DBG(
@@ -320,8 +353,11 @@ int ImuError::append(
 
   setT1(t_1);
 
-  const int cnt = doPropagation(
-    preintegrated_, helpers_, P_delta_, imuParameters_, imuMeasurements, speedAndBiases, time, end);
+  // Keep the existing reference (linearisation) point when appending.
+  const std::vector<AlignedInterval> intervals =
+    alignAndCorrectMeasurements(imuMeasurements, imuParameters_, speedAndBiases_ref_, time, end);
+
+  const int cnt = doPropagation(preintegrated_, helpers_, P_delta_, imuParameters_, intervals);
 
   PseudoInverse::symmSqrtU(P_delta_, squareRootInformation_);
   information_ = squareRootInformation_.transpose() * squareRootInformation_;
@@ -353,9 +389,10 @@ int ImuError::redoPreintegration(
 
   reset();
 
-  const int cnt = doPropagation(
-    preintegrated_, helpers_, P_delta_, imuParameters_, imuMeasurements_, speedAndBiases, time,
-    end);
+  const std::vector<AlignedInterval> intervals =
+    alignAndCorrectMeasurements(imuMeasurements_, imuParameters_, speedAndBiases, time, end);
+
+  const int cnt = doPropagation(preintegrated_, helpers_, P_delta_, imuParameters_, intervals);
 
   PseudoInverse::symmSqrtU(P_delta_, squareRootInformation_);
   information_ = squareRootInformation_.transpose() * squareRootInformation_;
@@ -376,7 +413,6 @@ void ImuError::syncFrom(const ImuError & other)
   helpers_ = other.helpers_;
   P_delta_ = other.P_delta_;
   speedAndBiases_ref_ = other.speedAndBiases_ref_;
-  redo_ = other.redo_;
   redoCounter_ = other.redoCounter_;
   information_ = other.information_;
   squareRootInformation_ = other.squareRootInformation_;
@@ -394,7 +430,6 @@ std::shared_ptr<ImuErrorBase> ImuError::clone() const
   clone->helpers_ = helpers_;
   clone->P_delta_ = P_delta_;
   clone->speedAndBiases_ref_ = speedAndBiases_ref_;
-  clone->redo_ = redo_;
   clone->redoCounter_ = redoCounter_;
   clone->information_ = information_;
   clone->squareRootInformation_ = squareRootInformation_;
@@ -445,74 +480,22 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
   Eigen::Matrix<double, kNumResiduals, kNumResiduals> P_delta =
     Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Zero();
 
+  const std::vector<AlignedInterval> intervals =
+    alignAndCorrectMeasurements(imuMeasurements, imuParams, speedAndBiases, time, end);
+
   double Delta_t = 0;
-  bool hasStarted = false;
-  int i = 0;
-  for (okvis::ImuMeasurementDeque::const_iterator it = imuMeasurements.begin();
-        it != imuMeasurements.end(); ++it) {
+  for (const AlignedInterval & aligned : intervals) {
 
-    Eigen::Vector3d omega_S_0 = it->measurement.gyroscopes;
-    Eigen::Vector3d acc_S_0 = it->measurement.accelerometers;
-    Eigen::Vector3d omega_S_1 = (it + 1)->measurement.gyroscopes;
-    Eigen::Vector3d acc_S_1 = (it + 1)->measurement.accelerometers;
+    const double dt = aligned.dt;
+    const double & sigma_g_c = aligned.sigma_g_c;
+    const double & sigma_a_c = aligned.sigma_a_c;
 
-    // time delta
-    okvis::Time nexttime;
-    if ((it + 1) == imuMeasurements.end()) {
-      nexttime = t_end;
-    } else
-      nexttime = (it + 1)->timeStamp;
-    double dt = (nexttime - time).toSec();
-
-
-    if (end < nexttime) {
-      double interval = (nexttime - it->timeStamp).toSec();
-      nexttime = t_end;
-      dt = (nexttime - time).toSec();
-      const double r = dt / interval;
-      omega_S_1 = ((1.0 - r) * omega_S_0 + r * omega_S_1).eval();
-      acc_S_1 = ((1.0 - r) * acc_S_0 + r * acc_S_1).eval();
-    }
-
-    if (dt <= 0.0) {
-      continue;
-    }
     Delta_t += dt;
-
-    if (!hasStarted) {
-      hasStarted = true;
-      const double r = dt / (nexttime - it->timeStamp).toSec();
-      omega_S_0 = (r * omega_S_0 + (1.0 - r) * omega_S_1).eval();
-      acc_S_0 = (r * acc_S_0 + (1.0 - r) * acc_S_1).eval();
-    }
-
-    // ensure integrity
-    double sigma_g_c = imuParams.sigma_g_c;
-    double sigma_a_c = imuParams.sigma_a_c;
-
-    if (fabs(omega_S_0[0]) > imuParams.g_max
-        || fabs(omega_S_0[1]) > imuParams.g_max
-        || fabs(omega_S_0[2]) > imuParams.g_max
-        || fabs(omega_S_1[0]) > imuParams.g_max
-        || fabs(omega_S_1[1]) > imuParams.g_max
-        || fabs(omega_S_1[2]) > imuParams.g_max) {
-      sigma_g_c *= 100;
-      LOG(WARNING) << "gyr saturation";
-    }
-
-    if (fabs(acc_S_0[0]) > imuParams.a_max || fabs(acc_S_0[1]) > imuParams.a_max
-        || fabs(acc_S_0[2]) > imuParams.a_max
-        || fabs(acc_S_1[0]) > imuParams.a_max
-        || fabs(acc_S_1[1]) > imuParams.a_max
-        || fabs(acc_S_1[2]) > imuParams.a_max) {
-      sigma_a_c *= 100;
-      LOG(WARNING) << "acc saturation";
-    }
 
     // actual propagation
     // orientation:
     Eigen::Quaterniond dq;
-    const Eigen::Vector3d omega_S_true = (0.5*(omega_S_0+omega_S_1) - speedAndBiases.segment<3>(3));
+    const Eigen::Vector3d omega_S_true = aligned.imu.gyroscopes;
     const double theta_half = omega_S_true.norm() * 0.5 * dt;
     const double sinc_theta_half = ode::sinc(theta_half);
     const double cos_theta_half = cos(theta_half);
@@ -522,7 +505,7 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
     // rotation matrix integral:
     const Eigen::Matrix3d C = Delta_q.toRotationMatrix();
     const Eigen::Matrix3d C_1 = Delta_q_1.toRotationMatrix();
-    const Eigen::Vector3d acc_S_true = (0.5*(acc_S_0+acc_S_1) - speedAndBiases.segment<3>(6));
+    const Eigen::Vector3d acc_S_true = aligned.imu.accelerometers;
     const Eigen::Matrix3d C_integral_1 = C_integral + 0.5*(C + C_1)*dt;
     const Eigen::Vector3d acc_integral_1 = acc_integral + 0.5*(C + C_1)*acc_S_true*dt;
     // rotation matrix double integral:
@@ -584,13 +567,6 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
     acc_integral = acc_integral_1;
     cross = cross_1;
     dv_db_g = dv_db_g_1;
-    time = nexttime;
-
-    ++i;
-
-    if (nexttime == t_end)
-      break;
-
   }
 
   // actual propagation output:
@@ -627,7 +603,7 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
     T.block<3,3>(6,6) = C_WS_0;
     P = T * P_delta * T.transpose();
   }
-  return i;
+  return int(intervals.size());
 }
 
 bool ImuError::initPose(const ImuMeasurementDeque &imuMeasurements,
@@ -705,8 +681,8 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
     std::lock_guard<std::mutex> lock(preintegrationMutex_);
     Delta_b = speedAndBiases_0.tail<6>()
           - speedAndBiases_ref_.tail<6>();
-    redo_ = redo_ || (Delta_b.head<3>().norm() > 0.0003);
-    if ((redo_ && ((imuMeasurements_.size() < 50) || redoPropagationAlways)) || redoCounter_==0) {
+    const bool redo = Delta_b.head<3>().norm() > 0.0003;
+    if (redo || redoPropagationAlways || redoCounter_ == 0) {
       const int steps = redoPreintegration(T_WS_0, speedAndBiases_0);
       if(steps<=0) {
         for(const auto & m : imuMeasurements_)
@@ -726,7 +702,6 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
 
       redoCounter_++;
       Delta_b.setZero();
-      redo_ = false;
     }
   }
 
