@@ -442,7 +442,8 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
   Eigen::Matrix3d dp_db_g = Eigen::Matrix3d::Zero();
 
   // the Jacobian of the increment (w/o biases)
-  Eigen::Matrix<double,15,15> P_delta = Eigen::Matrix<double,15,15>::Zero();
+  Eigen::Matrix<double, kNumResiduals, kNumResiduals> P_delta =
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Zero();
 
   double Delta_t = 0;
   bool hasStarted = false;
@@ -538,7 +539,8 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
 
     // covariance propagation
     if (covariance) {
-      Eigen::Matrix<double,15,15> F_delta = Eigen::Matrix<double,15,15>::Identity();
+      Eigen::Matrix<double, kNumResiduals, kNumResiduals> F_delta =
+        Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Identity();
       // transform
       F_delta.block<3,3>(0,3) = -okvis::kinematics::crossMx(
             acc_integral*dt + 0.25*(C + C_1)*acc_S_true*dt*dt);
@@ -602,7 +604,7 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
 
   // assign Jacobian, if requested
   if (jacobian) {
-    Eigen::Matrix<double,15,15> & F = *jacobian;
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> & F = *jacobian;
     F.setIdentity(); // holds for all states, including d/dalpha, d/db_g, d/db_a
     F.block<3,3>(0,3) = -okvis::kinematics::crossMx(C_WS_0*acc_doubleintegral);
     F.block<3,3>(0,6) = Eigen::Matrix3d::Identity()*Delta_t;
@@ -616,9 +618,10 @@ int ImuError::propagation(const okvis::ImuMeasurementDeque & imuMeasurements,
 
   // overall covariance, if requested
   if (covariance) {
-    Eigen::Matrix<double,15,15> & P = *covariance;
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> & P = *covariance;
     // transform from local increments to actual states
-    Eigen::Matrix<double,15,15> T = Eigen::Matrix<double,15,15>::Identity();
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> T =
+      Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Identity();
     T.topLeftCorner<3,3>() = C_WS_0;
     T.block<3,3>(3,3) = C_WS_0;
     T.block<3,3>(6,6) = C_WS_0;
@@ -669,7 +672,7 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
                                             double** jacobiansMinimal) const {
   bool success = true;
 
-  Eigen::Map<Eigen::Matrix<double, 15, 1> > weighted_error(residuals);
+  Eigen::Map<Eigen::Matrix<double, kNumResiduals, 1> > weighted_error(residuals);
 
   // get poses
   const okvis::kinematics::Transformation T_WS_0(
@@ -734,8 +737,8 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
     const Eigen::Vector3d g_W = imuParameters_.g * Eigen::Vector3d(0, 0, 6371009).normalized();
 
     // assign Jacobian w.r.t. x0
-    Eigen::Matrix<double, 15, 15> F0 =
-      Eigen::Matrix<double, 15, 15>::Identity();  // holds for d/db_g, d/db_a
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> F0 =
+      Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Identity();  // holds for d/db_g, d/db_a
     const Eigen::Vector3d delta_p_est_W = T_WS_0.r() - T_WS_1.r() +
                                           speedAndBiases_0.head<3>() * Delta_t -
                                           0.5 * g_W * Delta_t * Delta_t;
@@ -761,8 +764,8 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
     F0.block<3, 3>(6, 12) = -helpers_.C_integral;
 
     // assign Jacobian w.r.t. x1
-    Eigen::Matrix<double, 15, 15> F1 =
-      -Eigen::Matrix<double, 15, 15>::Identity();  // holds for the biases
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> F1 =
+      -Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Identity();  // holds for the biases
     F1.block<3, 3>(0, 0) = -C_S0_W;
     F1.block<3, 3>(3, 3) = -(okvis::kinematics::plus(Dq) * okvis::kinematics::oplus(T_WS_0.q()) *
                              okvis::kinematics::plus(T_WS_1.q().inverse()))
@@ -770,7 +773,7 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
     F1.block<3, 3>(6, 6) = -C_S0_W;
 
     // the overall error vector
-    Eigen::Matrix<double, 15, 1> error;
+    Eigen::Matrix<double, kNumResiduals, 1> error;
     error.segment<3>(0) =
       C_S0_W * delta_p_est_W + preintegrated_.Delta_p + F0.block<3, 6>(0, 9) * Delta_b;
     error.segment<3>(3) = 2 * (Dq * (T_WS_1.q().inverse() * T_WS_0.q())).vec();
@@ -788,20 +791,21 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
     if (jacobians != nullptr) {
       if (jacobians[0] != nullptr) {
         // Jacobian w.r.t. minimal perturbance
-        Eigen::Matrix<double, 15, 6> J0_minimal = squareRootInformation_ * F0.block<15, 6>(0, 0);
+        Eigen::Matrix<double, kNumResiduals, 6> J0_minimal =
+          squareRootInformation_ * F0.block<kNumResiduals, 6>(0, 0);
 
         // pseudo inverse of the local parametrization Jacobian:
         Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
         PoseManifold::minusJacobian(parameters[0], J_lift.data());
 
         // hallucinate Jacobian w.r.t. state
-        Eigen::Map<Eigen::Matrix<double, 15, 7, Eigen::RowMajor>> J0(jacobians[0]);
+        Eigen::Map<Eigen::Matrix<double, kNumResiduals, 7, Eigen::RowMajor>> J0(jacobians[0]);
         J0 = J0_minimal * J_lift;
 
         // if requested, provide minimal Jacobians
         if (jacobiansMinimal != nullptr) {
           if (jacobiansMinimal[0] != nullptr) {
-            Eigen::Map<Eigen::Matrix<double, 15, 6, Eigen::RowMajor>> J0_minimal_mapped(
+            Eigen::Map<Eigen::Matrix<double, kNumResiduals, 6, Eigen::RowMajor>> J0_minimal_mapped(
               jacobiansMinimal[0]);
             J0_minimal_mapped = J0_minimal;
             if (!success) {
@@ -811,13 +815,13 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
         }
       }
       if (jacobians[1] != nullptr) {
-        Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> J1(jacobians[1]);
-        J1 = squareRootInformation_ * F0.block<15, 9>(0, 6);
+        Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor>> J1(jacobians[1]);
+        J1 = squareRootInformation_ * F0.block<kNumResiduals, 9>(0, 6);
 
         // if requested, provide minimal Jacobians
         if (jacobiansMinimal != nullptr) {
           if (jacobiansMinimal[1] != nullptr) {
-            Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> J1_minimal_mapped(
+            Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor>> J1_minimal_mapped(
               jacobiansMinimal[1]);
             J1_minimal_mapped = J1;
             if (!success) {
@@ -828,20 +832,21 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
       }
       if (jacobians[2] != nullptr) {
         // Jacobian w.r.t. minimal perturbance
-        Eigen::Matrix<double, 15, 6> J2_minimal = squareRootInformation_ * F1.block<15, 6>(0, 0);
+        Eigen::Matrix<double, kNumResiduals, 6> J2_minimal =
+          squareRootInformation_ * F1.block<kNumResiduals, 6>(0, 0);
 
         // pseudo inverse of the local parametrization Jacobian:
         Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
         PoseManifold::minusJacobian(parameters[2], J_lift.data());
 
         // hallucinate Jacobian w.r.t. state
-        Eigen::Map<Eigen::Matrix<double, 15, 7, Eigen::RowMajor>> J2(jacobians[2]);
+        Eigen::Map<Eigen::Matrix<double, kNumResiduals, 7, Eigen::RowMajor>> J2(jacobians[2]);
         J2 = J2_minimal * J_lift;
 
         // if requested, provide minimal Jacobians
         if (jacobiansMinimal != nullptr) {
           if (jacobiansMinimal[2] != nullptr) {
-            Eigen::Map<Eigen::Matrix<double, 15, 6, Eigen::RowMajor>> J2_minimal_mapped(
+            Eigen::Map<Eigen::Matrix<double, kNumResiduals, 6, Eigen::RowMajor>> J2_minimal_mapped(
               jacobiansMinimal[2]);
             J2_minimal_mapped = J2_minimal;
             if (!success) {
@@ -851,13 +856,13 @@ bool ImuError::EvaluateWithMinimalJacobians(double const* const * parameters,
         }
       }
       if (jacobians[3] != nullptr) {
-        Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> J3(jacobians[3]);
-        J3 = squareRootInformation_ * F1.block<15, 9>(0, 6);
+        Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor>> J3(jacobians[3]);
+        J3 = squareRootInformation_ * F1.block<kNumResiduals, 9>(0, 6);
 
         // if requested, provide minimal Jacobians
         if (jacobiansMinimal != nullptr) {
           if (jacobiansMinimal[3] != nullptr) {
-            Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> J3_minimal_mapped(
+            Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor>> J3_minimal_mapped(
               jacobiansMinimal[3]);
             J3_minimal_mapped = J3;
             if (!success) {
@@ -907,15 +912,15 @@ bool ImuError::EvaluateWithSigmaGradientAndHessian(const double * const *paramet
   }
 
   // actual propagation output:
-  Eigen::Matrix<double, 15, 1> error;
+  Eigen::Matrix<double, kNumResiduals, 1> error;
   {
     std::lock_guard<std::mutex> lock(preintegrationMutex_);
     // the above is a bit stupid, but shared read-locks only come in C++14
     const Eigen::Vector3d g_W = imuParameters_.g * Eigen::Vector3d(0, 0, 6371009).normalized();
 
     // assign Jacobian w.r.t. x0
-    Eigen::Matrix<double, 15, 15> F0 =
-      Eigen::Matrix<double, 15, 15>::Identity();  // holds for d/db_g, d/db_a
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> F0 =
+      Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Identity();  // holds for d/db_g, d/db_a
     const Eigen::Vector3d delta_p_est_W = T_WS_0.r() - T_WS_1.r() +
                                           speedAndBiases_0.head<3>() * Delta_t -
                                           0.5 * g_W * Delta_t * Delta_t;
@@ -941,8 +946,8 @@ bool ImuError::EvaluateWithSigmaGradientAndHessian(const double * const *paramet
     F0.block<3, 3>(6, 12) = -helpers_.C_integral;
 
     // assign Jacobian w.r.t. x1
-    Eigen::Matrix<double, 15, 15> F1 =
-      -Eigen::Matrix<double, 15, 15>::Identity();  // holds for the biases
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> F1 =
+      -Eigen::Matrix<double, kNumResiduals, kNumResiduals>::Identity();  // holds for the biases
     F1.block<3, 3>(0, 0) = -C_S0_W;
     F1.block<3, 3>(3, 3) = -(okvis::kinematics::plus(Dq) * okvis::kinematics::oplus(T_WS_0.q()) *
                              okvis::kinematics::plus(T_WS_1.q().inverse()))
@@ -970,15 +975,16 @@ bool ImuError::EvaluateWithSigmaGradientAndHessian(const double * const *paramet
   Eigen::Map<Eigen::Matrix<double, 4, 1>> gradientVec(gradient);
   Eigen::Map<Eigen::Matrix<double, 4, 4>> hessianMat(hessian);
   for (size_t j = 0; j < 4; ++j) {
-    Eigen::Matrix<double, 15, 1> inf_e = information_ * error;
-    //Eigen::Matrix<double, 15, 15> Z = information_*dPdsigma_.at(j)*information_;
-    Eigen::Matrix<double, 15, 15> Y = information_ * dPdsigma_.at(j);
+    Eigen::Matrix<double, kNumResiduals, 1> inf_e = information_ * error;
+    //Eigen::Matrix<double, kNumResiduals, kNumResiduals> Z
+    //  = information_*dPdsigma_.at(j)*information_;
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> Y = information_ * dPdsigma_.at(j);
     gradientVec[int(j)] = 0.5 * (-inf_e.transpose() * dPdsigma_.at(j) * inf_e + Y.trace());
     // evaluate Hessian
     // diagonal first: dcost/dsigma_j^2
-    //Eigen::Matrix<double, 15, 15> Zdash
+    //Eigen::Matrix<double, kNumResiduals, kNumResiduals> Zdash
     // = -Z*dPdsigma_.at(j)*information_ - information_*dPdsigma_.at(j)*Z;
-    Eigen::Matrix<double, 15, 15> Ydash = -Y * information_ * dPdsigma_.at(j);
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> Ydash = -Y * information_ * dPdsigma_.at(j);
     hessianMat(int(j), int(j)) =
       0.5 * (2 * (inf_e.transpose() * dPdsigma_.at(j)) * information_ * (dPdsigma_.at(j) * inf_e) +
              Ydash.trace());
@@ -1063,12 +1069,12 @@ bool PseudoImuError::EvaluateWithMinimalJacobians(double const *const *parameter
   kinematics::Transformation T_WS_1_predicted(T_WS_0.r() + dr, T_WS_0.q());
 
   // compute the residual
-  Eigen::Matrix<double, 15, 1> error;
+  Eigen::Matrix<double, kNumResiduals, 1> error;
   error.head<3>() = C_S0_W * (T_WS_1_predicted.r() - T_WS_1.r());
   error.segment<3>(3) = 2.0 * ((T_WS_1.q().inverse() * T_WS_0.q()).coeffs().head<3>());
   error.segment<3>(6) = C_S0_W * (speedAndBiases_0.head<3>() - speedAndBiases_1.head<3>());
   error.segment<6>(9) = speedAndBiases_0.tail<6>() - speedAndBiases_1.tail<6>();
-  Eigen::Map<Eigen::Matrix<double, 15, 1>> weighted_error(residuals);
+  Eigen::Map<Eigen::Matrix<double, kNumResiduals, 1>> weighted_error(residuals);
   information_t squareRootInformation = information_t::Identity(); /// \todo
   squareRootInformation.block<3, 3>(0, 0) *= 1.0 / sqrt(Delta_t);
   squareRootInformation.block<3, 3>(3, 3) *= 1.0 / sqrt(Delta_t);
@@ -1081,7 +1087,7 @@ bool PseudoImuError::EvaluateWithMinimalJacobians(double const *const *parameter
   if (jacobians != nullptr) {
     if (jacobians[0] != nullptr) {
       // Jacobian w.r.t. minimal perturbance
-      Eigen::Matrix<double, 15, 6> Jp0 = Eigen::Matrix<double, 15, 6>::Zero();
+      Eigen::Matrix<double, kNumResiduals, 6> Jp0 = Eigen::Matrix<double, kNumResiduals, 6>::Zero();
       Jp0.block<3, 3>(0, 0) = C_S0_W;
       Jp0.block<3, 3>(0, 3) = C_S0_W * kinematics::crossMx(T_WS_1_predicted.r() - T_WS_1.r());
       Jp0.block<3, 3>(3, 3)
@@ -1089,28 +1095,29 @@ bool PseudoImuError::EvaluateWithMinimalJacobians(double const *const *parameter
       Jp0.block<3, 3>(6, 3) = C_S0_W
                               * kinematics::crossMx(speedAndBiases_0.head<3>()
                                                     - speedAndBiases_1.head<3>());
-      Eigen::Matrix<double, 15, 6> J0_minimal = squareRootInformation * Jp0;
+      Eigen::Matrix<double, kNumResiduals, 6> J0_minimal = squareRootInformation * Jp0;
 
       // pseudo inverse of the local parametrization Jacobian:
       Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
       PoseManifold::minusJacobian(parameters[0], J_lift.data());
 
       // hallucinate Jacobian w.r.t. state
-      Eigen::Map<Eigen::Matrix<double, 15, 7, Eigen::RowMajor>> J0(jacobians[0]);
+      Eigen::Map<Eigen::Matrix<double, kNumResiduals, 7, Eigen::RowMajor>> J0(jacobians[0]);
       J0 = J0_minimal * J_lift;
 
       // if requested, provide minimal Jacobians
       if (jacobiansMinimal != nullptr) {
         if (jacobiansMinimal[0] != nullptr) {
-          Eigen::Map<Eigen::Matrix<double, 15, 6, Eigen::RowMajor>> J0_minimal_mapped(
+          Eigen::Map<Eigen::Matrix<double, kNumResiduals, 6, Eigen::RowMajor>> J0_minimal_mapped(
             jacobiansMinimal[0]);
           J0_minimal_mapped = J0_minimal;
         }
       }
     }
     if (jacobians[1] != nullptr) {
-      Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> J1(jacobians[1]);
-      Eigen::Matrix<double, 15, 9> Jsb0 = Eigen::Matrix<double, 15, 9>::Zero();
+      Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor>> J1(jacobians[1]);
+      Eigen::Matrix<double, kNumResiduals, 9> Jsb0 =
+        Eigen::Matrix<double, kNumResiduals, 9>::Zero();
       Jsb0.block<3, 3>(0, 0) = Delta_t * C_S0_W;
       Jsb0.block<3, 3>(6, 0) = C_S0_W;
       Jsb0.bottomRightCorner<6, 6>() = Eigen::Matrix<double, 6, 6>::Identity();
@@ -1119,7 +1126,7 @@ bool PseudoImuError::EvaluateWithMinimalJacobians(double const *const *parameter
       // if requested, provide minimal Jacobians
       if (jacobiansMinimal != nullptr) {
         if (jacobiansMinimal[1] != nullptr) {
-          Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> J1_minimal_mapped(
+          Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor>> J1_minimal_mapped(
             jacobiansMinimal[1]);
           J1_minimal_mapped = J1;
         }
@@ -1127,41 +1134,42 @@ bool PseudoImuError::EvaluateWithMinimalJacobians(double const *const *parameter
     }
     if (jacobians[2] != nullptr) {
       // Jacobian w.r.t. minimal perturbance
-      Eigen::Matrix<double, 15, 6> Jp1 = Eigen::Matrix<double, 15, 6>::Zero();
+      Eigen::Matrix<double, kNumResiduals, 6> Jp1 = Eigen::Matrix<double, kNumResiduals, 6>::Zero();
       Jp1.block<3, 3>(0, 0) = -C_S0_W;
       Jp1.block<3, 3>(3, 3)
         = -kinematics::plus(T_WS_1.q().inverse() * T_WS_0.q()).topLeftCorner<3, 3>() * C_S0_W;
-      Eigen::Matrix<double, 15, 6> J2_minimal = squareRootInformation * Jp1;
+      Eigen::Matrix<double, kNumResiduals, 6> J2_minimal = squareRootInformation * Jp1;
 
       // pseudo inverse of the local parametrization Jacobian:
       Eigen::Matrix<double, 6, 7, Eigen::RowMajor> J_lift;
       PoseManifold::minusJacobian(parameters[2], J_lift.data());
 
       // hallucinate Jacobian w.r.t. state
-      Eigen::Map<Eigen::Matrix<double, 15, 7, Eigen::RowMajor> > J2(
+      Eigen::Map<Eigen::Matrix<double, kNumResiduals, 7, Eigen::RowMajor> > J2(
         jacobians[2]);
       J2 = J2_minimal * J_lift;
 
       // if requested, provide minimal Jacobians
       if (jacobiansMinimal != nullptr) {
         if (jacobiansMinimal[2] != nullptr) {
-          Eigen::Map<Eigen::Matrix<double, 15, 6, Eigen::RowMajor> > J2_minimal_mapped(
+          Eigen::Map<Eigen::Matrix<double, kNumResiduals, 6, Eigen::RowMajor> > J2_minimal_mapped(
             jacobiansMinimal[2]);
           J2_minimal_mapped = J2_minimal;
         }
       }
     }
     if (jacobians[3] != nullptr) {
-      Eigen::Matrix<double, 15, 9> Jsb1 = Eigen::Matrix<double, 15, 9>::Zero();
+      Eigen::Matrix<double, kNumResiduals, 9> Jsb1 =
+        Eigen::Matrix<double, kNumResiduals, 9>::Zero();
       Jsb1.block<3, 3>(6, 0) = -C_S0_W;
       Jsb1.bottomRightCorner<6, 6>() = -Eigen::Matrix<double, 6, 6>::Identity();
-      Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor> > J3(jacobians[3]);
+      Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor> > J3(jacobians[3]);
       J3 = squareRootInformation * Jsb1;
 
       // if requested, provide minimal Jacobians
       if (jacobiansMinimal != nullptr) {
         if (jacobiansMinimal[3] != nullptr) {
-          Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor> > J3_minimal_mapped(
+          Eigen::Map<Eigen::Matrix<double, kNumResiduals, 9, Eigen::RowMajor> > J3_minimal_mapped(
             jacobiansMinimal[3]);
           J3_minimal_mapped = J3;
         }
