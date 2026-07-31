@@ -83,16 +83,10 @@ bool ViGraphEstimator::eliminateStateByImuMerge(StateId stateId, StateId refId)
   // the IMU link to append
   ImuLink & previousImuLink = previousState.nextImuLink;
 
-  // obtain current estimates
-  kinematics::Transformation T_WS = state.pose->estimate();
-  SpeedAndBias speedAndBias = state.speedAndBias->estimate();
-
   if(imuParametersVec_.at(0).use) {
     // append
     std::static_pointer_cast<ceres::ImuError>(previousImuLink.errorTerm)
-      ->append(T_WS,
-               speedAndBias,
-               std::static_pointer_cast<ceres::ImuError>(state.nextImuLink.errorTerm)
+      ->append(std::static_pointer_cast<ceres::ImuError>(state.nextImuLink.errorTerm)
                  ->imuMeasurements(),
                state.nextImuLink.errorTerm->t1());
   } else {

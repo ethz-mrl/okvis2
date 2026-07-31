@@ -77,20 +77,20 @@ class ImuErrorBase : public ::ceres::SizedCostFunction<
   static const int kNumResiduals = 15;
 
   /// \brief The type of the covariance.
-  typedef Eigen::Matrix<double, 15, 15> covariance_t;
+  typedef Eigen::Matrix<double, kNumResiduals, kNumResiduals> covariance_t;
 
   /// \brief The type of the information (same matrix dimension as covariance).
   typedef covariance_t information_t;
 
   /// \brief The type of hte overall Jacobian.
-  typedef Eigen::Matrix<double, 15, 15> jacobian_t;
+  typedef Eigen::Matrix<double, kNumResiduals, kNumResiduals> jacobian_t;
 
   /// \brief The type of the Jacobian w.r.t. poses --
   /// \warning This is w.r.t. minimal tangential space coordinates...
-  typedef Eigen::Matrix<double, 15, 7> jacobian0_t;
+  typedef Eigen::Matrix<double, kNumResiduals, 7> jacobian0_t;
 
   /// \brief The type of Jacobian w.r.t. Speed and biases
-  typedef Eigen::Matrix<double, 15, 9> jacobian1_t;
+  typedef Eigen::Matrix<double, kNumResiduals, 9> jacobian1_t;
 
   /// \brief Trivial destructor.
   virtual ~ImuErrorBase() override = default;
@@ -168,9 +168,7 @@ class ImuError :
   /// \brief Append with measurements and parameters.
   /// \@param[in] imuMeasurements All the IMU measurements.
   /// \@param[in] t_1 End time.
-  int append(const okvis::kinematics::Transformation& T_WS,
-             const okvis::SpeedAndBias & speedAndBiases,
-             const okvis::ImuMeasurementDeque & imuMeasurements,
+  int append(const okvis::ImuMeasurementDeque & imuMeasurements,
              const okvis::Time& t_1);
 
   /**
@@ -284,6 +282,124 @@ class ImuError :
   }
 
  protected:
+
+  struct PreintegratedMeasurements
+  {
+    Eigen::Quaterniond Delta_q;
+    Eigen::Vector3d Delta_v;
+    Eigen::Vector3d Delta_p;
+
+    PreintegratedMeasurements operator*(const PreintegratedMeasurements & other) const
+    {
+      PreintegratedMeasurements result;
+      result.Delta_q = Delta_q * other.Delta_q;
+      result.Delta_p = Delta_p + other.Delta_p;
+      result.Delta_v = Delta_v + other.Delta_v;
+      return result;
+    }
+
+    static PreintegratedMeasurements Identity()
+    {
+      PreintegratedMeasurements id;
+      id.Delta_q = Eigen::Quaterniond(1, 0, 0, 0);
+      id.Delta_v = Eigen::Vector3d::Zero();
+      id.Delta_p = Eigen::Vector3d::Zero();
+      return id;
+    }
+  };
+
+  struct HelperMeasurements
+  {
+    Eigen::Matrix3d C_integral;
+    Eigen::Matrix3d C_doubleintegral;
+    Eigen::Matrix3d dq_db_g;
+    Eigen::Matrix3d dalpha_db_g;
+    Eigen::Matrix3d dv_db_g;
+    Eigen::Matrix3d dp_db_g;
+    Eigen::Matrix3d ddv_db_g;
+
+    static HelperMeasurements Zero()
+    {
+      HelperMeasurements h;
+      h.C_integral = Eigen::Matrix3d::Zero();
+      h.C_doubleintegral = Eigen::Matrix3d::Zero();
+      h.dq_db_g = Eigen::Matrix3d::Zero();
+      h.dalpha_db_g = Eigen::Matrix3d::Zero();
+      h.dv_db_g = Eigen::Matrix3d::Zero();
+      h.dp_db_g = Eigen::Matrix3d::Zero();
+      h.ddv_db_g = Eigen::Matrix3d::Zero();
+      return h;
+    }
+  };
+
+  /// \brief One integration interval, aligned to the preintegration period and bias-corrected.
+  struct AlignedInterval
+  {
+    double dt;              ///< Interval duration [s].
+    ImuSensorReadings imu;  ///< Midpoint reading over the interval, with the biases removed.
+    double sigma_g_c;       ///< Gyroscope noise density, scaled up on saturation.
+    double sigma_a_c;       ///< Accelerometer noise density, scaled up on saturation.
+  };
+
+  /**
+   * @brief Align measurements to the given time interval and correct them for the given biases.
+   *
+   * Interpolates so that the first and last interval coincide exactly with t0 and t1, drops the
+   * intervals outside [t0, t1], and reduces each remaining interval to its midpoint reading with
+   * the biases removed.
+   *
+   * @param[in] imuMeasurements The IMU measurements. Must span t0 - t1.
+   * @param[in] imuParameters The parameters to be used.
+   * @param[in] speedAndBiases Speed and biases providing the biases to remove.
+   * @param[in] t0 Start time.
+   * @param[in] t1 End time.
+   * @return One entry per integration interval, in chronological order.
+   */
+  static std::vector<AlignedInterval> alignAndCorrectMeasurements(
+    const ImuMeasurementDeque & imuMeasurements, const ImuParameters & imuParameters,
+    const SpeedAndBias & speedAndBiases, const Time & t0, const Time & t1);
+
+  /**
+   * @brief Reset preintegrated measurements to identity, helper measurements to zero and preintegration covariance to zero.
+   */
+  void reset() const;
+
+  /**
+   * @brief Compute preintegrated measurement Delta_x_ik+1 from given measurement and time delta.
+   * @param[in] imu The imu measurement at time k.
+   * @param[in] dt Time delta tk+1 - tk.
+   * @return The preintegrated measurement.
+   */
+  static PreintegratedMeasurements computePreintegratedIncrements(
+    const PreintegratedMeasurements & preintegrated, const ImuSensorReadings & imu, double dt);
+
+  /**
+   * @brief Compute helper measurement at time k up to time k+1.
+   * @param[in] imu The imu measurement at time k.
+   * @param[in] dt Time delta tk+1 - tk.
+   * @param[in] C_0 Preintegrated rotation at time k Delta_R_ik.
+   * @param[in] C_1 Preintegrated rotation at time k+1 Delta_R_ik+1.
+   * @param[in] dq Preintegrated rotation increment at time k.
+   * @return The helper measurement increments.
+   */
+  static HelperMeasurements computeNextHelperMeasurements(
+    const HelperMeasurements & helpers, const ImuSensorReadings & imu, double dt,
+    const Eigen::Matrix3d & C_0, const Eigen::Matrix3d & C_1, const Eigen::Quaterniond & dq);
+
+  /**
+   * @brief Propagate the preintegrated measurements over already-aligned intervals.
+   * @param[inout] preintegrated The preintegrated measurements to advance.
+   * @param[inout] helpers The helper variables to advance.
+   * @param[inout] covariance The preintegration covariance to advance.
+   * @param[in] imu_parameters The parameters to be used, for the bias random walk noise densities.
+   * @param[in] intervals The intervals as returned by alignAndCorrectMeasurements().
+   * @return Number of integration steps.
+   */
+  static int doPropagation(
+    PreintegratedMeasurements & preintegrated, HelperMeasurements & helpers,
+    Eigen::Matrix<double, kNumResiduals, kNumResiduals> & covariance,
+    const ImuParameters & imu_parameters, const std::vector<AlignedInterval> & intervals);
+
   // parameters
   okvis::ImuParameters imuParameters_; ///< The IMU parameters.
 
@@ -292,28 +408,20 @@ class ImuError :
 
   // preintegration stuff. the mutable is a TERRIBLE HACK, but what can I do.
   mutable std::mutex preintegrationMutex_; ///< Protect access of intermediate results.
-  // increments (initialise with identity)
-  mutable Eigen::Quaterniond Delta_q_ = Eigen::Quaterniond(1,0,0,0); ///< Intermediate result
-  mutable Eigen::Matrix3d C_integral_ = Eigen::Matrix3d::Zero(); ///< Intermediate result
-  mutable Eigen::Matrix3d C_doubleintegral_ = Eigen::Matrix3d::Zero(); ///< Intermediate result
-  mutable Eigen::Vector3d acc_integral_ = Eigen::Vector3d::Zero(); ///< Intermediate result
-  mutable Eigen::Vector3d acc_doubleintegral_ = Eigen::Vector3d::Zero(); ///< Intermediate result
 
-  // cross matrix accumulatrion
-  mutable Eigen::Matrix3d cross_ = Eigen::Matrix3d::Zero(); ///< Intermediate result
-
-  // sub-Jacobians
-  mutable Eigen::Matrix3d dalpha_db_g_ = Eigen::Matrix3d::Zero(); ///< Intermediate result
-  mutable Eigen::Matrix3d dv_db_g_ = Eigen::Matrix3d::Zero(); ///< Intermediate result
-  mutable Eigen::Matrix3d dp_db_g_ = Eigen::Matrix3d::Zero(); ///< Intermediate result
+  /// \brief The preintegrated measurements.
+  mutable PreintegratedMeasurements preintegrated_;
+  
+  /// \brief Helper variables for the preintegration.
+  mutable HelperMeasurements helpers_;
 
   /// \brief The Jacobian of the increment (w/o biases).
-  mutable Eigen::Matrix<double,15,15> P_delta_ = Eigen::Matrix<double,15,15>::Zero();
+  mutable Eigen::Matrix<double, kNumResiduals, kNumResiduals> P_delta_
+  ;
 
   /// \brief Reference biases that are updated when called redoPreintegration.
   mutable SpeedAndBias speedAndBiases_ref_ = SpeedAndBias::Zero();
 
-  mutable bool redo_ = true; ///< Keeps track of whether or not redoPreintegration() is needed.
   mutable int redoCounter_ = 0; ///< Counts the number of preintegrations for statistics.
 
   // information matrix and its square root
@@ -321,7 +429,7 @@ class ImuError :
   mutable information_t squareRootInformation_; ///< The square root information of this error term.
 
   /// \brief For gradient/hessian w.r.t. the sigmas.
-  mutable AlignedVector<Eigen::Matrix<double,15,15>> dPdsigma_;
+  mutable AlignedVector<Eigen::Matrix<double, kNumResiduals, kNumResiduals>> dPdsigma_;
 
 };
 
