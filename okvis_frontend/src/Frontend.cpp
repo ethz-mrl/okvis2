@@ -1209,9 +1209,9 @@ bool Frontend::doWeNeedANewKeyframe(const Estimator &estimator,
 
     // go through all the frames and try to match the initialized keypoints
     auto otherFrame = estimator.multiFrame(frame);
-    for (size_t im = 0; im < otherFrame->numFrames(); ++im) {
-      const int rows = otherFrame->image(im).rows/10;
-      const int cols = otherFrame->image(im).cols/10;
+    for (size_t im = 0; im < currentFrame->numFrames(); ++im) {
+      const int rows = currentFrame->image(im).rows/10; // otherFrame image may be deleted to save mem!
+      const int cols = currentFrame->image(im).cols/10; // otherFrame image may be deleted to save mem!
 
       cv::Mat matches = cv::Mat::zeros(rows, cols, CV_8UC1);
       cv::Mat detections = cv::Mat::zeros(rows, cols, CV_8UC1);

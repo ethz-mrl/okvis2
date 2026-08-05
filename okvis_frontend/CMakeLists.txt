@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.8...3.30)
 
 find_package(Eigen3 REQUIRED)
-find_package(Glog REQUIRED)
+find_package(glog REQUIRED)
 if(USE_SYSTEM_BRISK)
   find_package(brisk REQUIRED)
 endif()
@@ -53,7 +53,7 @@ target_link_libraries(${LIB_NAME}
     brisk::brisk
     ${DBoW2_LIBRARIES}
   PRIVATE
-    ${GLOG_LIBRARIES}
+    glog::glog
     ${OPENGV_LIBRARIES}
     ${OpenCV_LIBS}
     ${TORCH_LIBRARIES}

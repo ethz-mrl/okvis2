@@ -39,6 +39,7 @@
 #include <okvis/ViGraph.hpp>
 #include <okvis/assert_macros.hpp>
 #include <okvis/timing/Timer.hpp>
+#include <glog/logging.h>
 
 /// \brief okvis Main namespace of this package.
 namespace okvis {

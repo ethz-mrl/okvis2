@@ -46,7 +46,11 @@
 #include <Eigen/Core>
 
 #include <opencv2/core/core.hpp>
+#if defined(__has_include) && __has_include(<opencv2/features.hpp>)
+#include <opencv2/features.hpp> // OpenCV 5 renamed features2d to features
+#else
 #include <opencv2/features2d/features2d.hpp>
+#endif
 
 #include <okvis/kinematics/Transformation.hpp>
 

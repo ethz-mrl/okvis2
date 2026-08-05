@@ -52,7 +52,11 @@
 #pragma GCC diagnostic pop
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#if defined(__has_include) && __has_include(<opencv2/features.hpp>)
+#include <opencv2/features.hpp> // OpenCV 5 renamed features2d to features
+#else
 #include <opencv2/features2d/features2d.hpp> // Code that causes warning goes here
+#endif
 #pragma GCC diagnostic pop
 
 #include <okvis/Time.hpp>

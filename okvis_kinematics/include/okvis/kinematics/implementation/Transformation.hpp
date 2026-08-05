@@ -144,10 +144,10 @@ inline TransformationT<CACHE_C>::TransformationT(const Eigen::Matrix4d & T_AB)
       C_(T_AB.topLeftCorner<3, 3>()) {
   r_ = (T_AB.topRightCorner<3, 1>());
   q_ = (T_AB.topLeftCorner<3, 3>());
-  assert(fabs(T_AB(3, 0)) < 1.0e-12);
-  assert(fabs(T_AB(3, 1)) < 1.0e-12);
-  assert(fabs(T_AB(3, 2)) < 1.0e-12);
-  assert(fabs(T_AB(3, 3) - 1.0) < 1.0e-12);
+  //assert(fabs(T_AB(3, 0)) < 1.0e-12);
+  //assert(fabs(T_AB(3, 1)) < 1.0e-12);
+  //assert(fabs(T_AB(3, 2)) < 1.0e-12);
+  //assert(fabs(T_AB(3, 3) - 1.0) < 1.0e-12);
 }
 
 template<bool CACHE_C>

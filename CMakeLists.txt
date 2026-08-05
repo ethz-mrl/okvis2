@@ -250,7 +250,7 @@ if(BUILD_ROS2)
       Eigen3::Eigen
       okvis::Common
       okvis::MultisensorProcessing
-      ${GLOG_LIBRARIES}
+      glog::glog
       ${Boost_LIBRARIES} 
       ${PCL_LIBRARIES}
   )

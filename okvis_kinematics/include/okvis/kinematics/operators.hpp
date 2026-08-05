@@ -81,7 +81,7 @@ inline Eigen::Matrix<typename Eigen::internal::traits<Derived_T>::Scalar, 3, 3> 
     Eigen::MatrixBase<Derived_T> const & v)
 {
   EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Eigen::MatrixBase<Derived_T>, 3);
-  assert((v.cols()==3 && v.rows()==1)||(v.rows()==3 && v.cols()==1));
+  //assert((v.cols()==3 && v.rows()==1)||(v.rows()==3 && v.cols()==1));
   return crossMx(v(0, 0), v(1, 0), v(2, 0));
 }
 

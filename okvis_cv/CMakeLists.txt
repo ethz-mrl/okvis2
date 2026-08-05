@@ -1,7 +1,14 @@
 cmake_minimum_required(VERSION 3.8...3.30)
 
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV REQUIRED core features2d imgproc)
+# OpenCV 5 renamed the features2d module to features; support both.
+find_package(OpenCV REQUIRED QUIET COMPONENTS core)
+if(OpenCV_VERSION VERSION_LESS 5.0)
+  set(OpenCV_FEATURES_COMPONENT features2d)
+else()
+  set(OpenCV_FEATURES_COMPONENT features)
+endif()
+find_package(OpenCV REQUIRED COMPONENTS core ${OpenCV_FEATURES_COMPONENT} imgproc)
 if(USE_SYSTEM_BRISK)
   find_package(brisk REQUIRED)
 endif()

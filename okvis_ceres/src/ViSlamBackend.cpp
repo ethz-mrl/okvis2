@@ -42,6 +42,8 @@
 #include <iomanip>
 #include <algorithm>
 
+#include <glog/logging.h>
+
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/imgcodecs/imgcodecs.hpp>
 

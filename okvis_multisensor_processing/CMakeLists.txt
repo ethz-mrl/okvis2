@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8...3.30)
 
 find_package(Boost REQUIRED COMPONENTS filesystem)
 find_package(Eigen3 REQUIRED)
-find_package(Glog REQUIRED)
+find_package(glog REQUIRED)
 find_package(OpenCV REQUIRED core imgcodecs imgproc highgui)
 
 # Generate the configured header file
@@ -37,7 +37,7 @@ target_include_directories(${LIB_NAME}
     ${GLOG_INCLUDE_DIRS}
 )
 target_link_libraries(${LIB_NAME}
-  ${GLOG_LIBRARIES}
+  glog::glog
   ${OpenCV_LIBS}
   Boost::filesystem
   Eigen3::Eigen

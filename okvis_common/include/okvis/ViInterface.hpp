@@ -49,7 +49,11 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"
 #include <opencv2/core/core.hpp>
+#if defined(__has_include) && __has_include(<opencv2/features.hpp>)
+#include <opencv2/features.hpp> // OpenCV 5 renamed features2d to features
+#else
 #include <opencv2/features2d/features2d.hpp>
+#endif
 #pragma GCC diagnostic pop
 #include <okvis/assert_macros.hpp>
 #include <okvis/Time.hpp>

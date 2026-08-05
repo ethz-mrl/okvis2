@@ -131,9 +131,18 @@ add_library( opengv ${OPENGV_SOURCE_FILES} ${OPENGV_HEADER_FILES} )
 set_target_properties( opengv PROPERTIES
                     SOVERSION ${PROJECT_VERSION}
                     VERSION ${PROJECT_VERSION}
-                    CXX_STANDARD 11
+                    CXX_STANDARD 14
                     CXX_STANDARD_REQUIRED ON)
                     # okvis2: remove DEBUG_POSTFIX to easily build in Debug
+
+# Hack: Eigen 5 doesn't have assert() ...
+# Target-specific forced inclusion based on the compiler:
+if (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    target_compile_options(opengv PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/../patches/opengv/eigen_assert_override.h")
+else()
+    # For GCC, Clang, and AppleClang
+    target_compile_options(opengv PRIVATE "-include" "${CMAKE_CURRENT_SOURCE_DIR}/../patches/opengv/eigen_assert_override.h")
+endif()
 
 target_include_directories( opengv PUBLIC 
                 # only when building from the source tree

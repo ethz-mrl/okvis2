@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.8...3.30)
 
 find_package(Eigen3 REQUIRED)
-find_package(Glog REQUIRED)
+find_package(glog REQUIRED)
 
 set(LIB_NAME okvis_common)
 add_library(${LIB_NAME}
@@ -29,7 +29,7 @@ target_link_libraries(${LIB_NAME}
     okvis::Time
     okvis::Util
   PRIVATE
-    ${GLOG_LIBRARIES}
+    glog::glog
 )
 target_compile_features(${LIB_NAME} PUBLIC cxx_std_${OKVIS_CXX_STANDARD})
 target_compile_options(${LIB_NAME}

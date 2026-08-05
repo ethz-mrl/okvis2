@@ -41,6 +41,8 @@
 #include <iomanip>
 #include <iostream>
 
+#include <glog/logging.h>
+
 #include "okvis/cameras/EquidistantDistortion.hpp"
 #include "okvis/cameras/PinholeCamera.hpp"
 #include "okvis/cameras/RadialTangentialDistortion.hpp"
