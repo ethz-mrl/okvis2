@@ -1161,6 +1161,8 @@ bool Frontend::doWeNeedANewKeyframe(const Estimator &estimator,
   // go through all the frames and try to match the initialized keypoints
   std::set<uint64_t> lmIds;
   for (size_t im = 0; im < currentFrame->numFrames(); ++im) {
+    if(currentFrame->image(im).empty())
+      continue;
     const int rows = currentFrame->image(im).rows/10;
     const int cols = currentFrame->image(im).cols/10;
 
@@ -1210,6 +1212,8 @@ bool Frontend::doWeNeedANewKeyframe(const Estimator &estimator,
     // go through all the frames and try to match the initialized keypoints
     auto otherFrame = estimator.multiFrame(frame);
     for (size_t im = 0; im < currentFrame->numFrames(); ++im) {
+      if(currentFrame->image(im).empty())
+        continue;
       const int rows = currentFrame->image(im).rows/10; // otherFrame image may be deleted to save mem!
       const int cols = currentFrame->image(im).cols/10; // otherFrame image may be deleted to save mem!
 
